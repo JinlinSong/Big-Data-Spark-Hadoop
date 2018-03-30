@@ -1,0 +1,19 @@
+%SPARK_HOME%\bin\pyspark
+
+>>> raw_data = sc.textFile(“hdfs:///data/twitter/twitter_rv.net”)
+>>> def parse_edge(s):
+... user, follower = s.split(“\t”)
+... return (int(user), int(follower))
+...
+>>> edges = raw_data.map(parse_edge).cache()
+
+import operator
+>>> follower_counts = edges.mapValues(lambda v: 1).reduceByKey(operator.add)
+>>> follower_counts.top(5, operator.itemgetter(1))
+[(19058681, 2997469), (15846407, 2679639), (16409683, 2674874),
+(428333, 2450749), (19397785, 1994926)]
+
+follower_counts = edges.aggregateByKey(0, lambda a, x: a + 1,operator.iadd)
+
+forward_edges = edges.map(lambda e: (e[1], e[0])).cache()
+

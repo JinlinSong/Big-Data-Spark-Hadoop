@@ -1,0 +1,7 @@
+wc -l file
+head file
+cat file | gshuf -n 10
+tail -n 100
+
+%%sh
+!

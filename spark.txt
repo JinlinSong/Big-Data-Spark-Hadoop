@@ -1,0 +1,243 @@
+%SPARK_HOME%\bin\spark-shell
+
+
+cd to file directory
+%SPARK_HOME%\bin\pyspark
+
+sc - spark context
+create a RDD .. parallelize
+a = sc.parallelize([1,2,3,4,5])
+a.getNumPartitions()
+a.collect()
+
+import subprocess as sp
+tmp = sp.call('cls',shell=True)
+
+b = a.map(lambda x: 2*x)
+b.collect()
+
+-- side effect
+b = a.map(lambda x: (print(x), 2*x)[1])
+b.collect()
+
+-- text file python and spark
+raw_data = sc.textFile("nasdaq.csv")
+raw_data.take(1)
+raw_data.take(3)
+
+from collections import namedtuple
+Record = namedtuple("Record", ["date","open","high","low","close","adj_close","volume"])
+
+def parse_record(s):
+   fields = s.split(",")
+   return Record(fields[0], *map(float, fields[1:6]), int(fields[6]))
+
+parsed_data = raw_data.map(parse_record)
+parsed_data.take(1)
+[Record(date='2/20/2018', open=7209.029785, high=7295.950195, low=7206.0, close=7234.310059, adj_close=7234.310059, volume=1911170000)]
+parsed_data.map(lambda x: x.volume).sum()
+
+parsed_data.cache()
+parsed_data = sc.textFile("nasdaq.csv").map(parse_record).cache()
+
+
+with_month_data = parsed_data.map(lambda x: (x.date[:7], x))
+with_month_data.take(1)
+
+by_month_data = with_month_data.mapValues(lambda x: x.volume)
+by_month_data.take(2)
+
+by_month_data = by_month_data.reduceByKey(lambda x, y: x + y)
+by_month_data.top(1, lambda x: x[1])
+
+result_data = by_month_data.map(lambda t: ",".join(map(str, t)))
+result_data.take(1)
+result_data.saveAsTextFile("out")
+
+result_data.repartition(1).saveAsTextFile('out')
+
+Ctrl + z
+quit()
+
+### Join
+%SPARK_HOME%\bin\pyspark
+from collections import namedtuple
+Record = namedtuple("Record", ["date", "open", "high", "low", "close","adj_close", "volume"])
+def parse_record(s):
+... fields = s.split(",")
+... return Record(fields[0], *map(float, fields[1:6]), int(fields[6]))
+parsed_data = sc.textFile("nasdaq.csv").map(parse_record).cache()
+
+date_and_close_price = parsed_data.map(lambda r: (r.date, r.close))
+from datetime import datetime, timedelta
+def get_next_date(s):
+... fmt = "%Y-%m-%d"
+... return (datetime.strptime(s, fmt) + timedelta(days=1)).strftime(fmt)
+...
+get_next_date("2017-01-03")
+
+date_and_prev_close_price = parsed_data.map(lambda r: (get_next_date(r.date), r.close))
+date_and_prev_close_price.take(3)
+
+joined = date_and_close_price.join(date_and_prev_close_price)
+joined.lookup("2018-01-04")
+returns = joined.mapValues(lambda p: (p[0] / p[1] - 1.0) * 100.0)
+returns.lookup('2018-01-04')
+returns.sortByKey().take(3)
+joined_left = date_and_close_price.leftOuterJoin(date_and_prev_close_price)
+joined.lookup("2017-03-20")
+joined_left.lookup("2017-03-20")
+joined_right = date_and_close_price.rightOuterJoin(date_and_prev_close_price)
+joined_right.lookup("2017-03-20")
+
+joined_full = date_and_close_price.fullOuterJoin(date_and_prev_close_price)
+joined_full.lookup("2017-09-03")
+
+###Broadcast & accumulator variables
+from collections import namedtuple
+Record = namedtuple("Record", ["date", "open", "high", "low", "close","adj_close", "volume"])
+def parse_record(s):
+fields = s.split(",")
+return Record(fields[0], *map(float, fields[1:6]), int(fields[6]))
+
+parsed_data = sc.textFile("nasdaq.csv").map(parse_record).cache()
+
+import time
+import random
+def super_regressor(v):
+time.sleep(random.random() / 1000.0)
+return 0.5 * ((v - 1910949928.057554) / 284610509.115) ** 2.0
+time_spent = sc.accumulator(0.0)
+time_spent
+
+def timed_super_regressor(v):
+...     before = time.time()
+...     result = super_regressor(v)
+...     after = time.time()
+...     time_spent.add(after - before)
+...     return result
+
+estimates = parsed_data.map(lambda r: timed_super_regressor(r.volume)).collect()
+time_spent.value
+
+from pyspark import AccumulatorParam
+>>> class MaxAccumulatorParam(AccumulatorParam):
+...     def zero(self, initial_value):
+...             return initial_value
+...
+>>> class MaxAccumulatorParam(AccumulatorParam):
+...     def zero(self, initial_value):
+...             return initial_value
+...     def addInPlace(self, accumulator, delta):
+...             return max(accumulator, delta)
+...
+>>> time_persist = sc.accumulator(0.0, MaxAccumulatorParam())
+>>> def persist_to_external_storage(iterable):
+...     for record in iterable:
+...             before = time.time()
+...             time.sleep(random.random() / 1000.0) # --party-- persist hard
+...             after = time.time()
+...             time_persist.add(after - before)
+...
+>>> parsed_data.foreachPartition(persist_to_external_storage)
+'foreachPartition' action to invoke arbitrary code on a data set
+time_persist.value
+
+broadcast variables
+
+parsed_data = sc.textFile("nasdaq.csv").map(parse_record).cache()
+def super_regressor(v):
+...     time.sleep(random.random() / 1000.0)
+...     return 0.5 * ((v - 1910949928.057554) / 284610509.115) ** 2.0
+...
+params = sc.broadcast({"mu": 1910949928.057554, "sigma": 284610509.115})
+def super_regressor(v):
+...     time.sleep(random.random() / 1000.0)
+...     return 0.5 * ((v - params.value["mu"]) / params.value["sigma"]) ** 2.0
+...
+parsed_data.map(lambda x: super_regressor(x.volume)).top(1)
+
+Spark UI:
+sc.uiWebUrl
+
+Cluster Mode:
+from pyspark import SparkConf, SparkContext
+sc = SparkContext(conf=SparkConf().setAppName("MyApp").setMaster("local"))
+
+Possible values for the master URL:
+local[K] — local mode with K threads
+spark://HOST:PORT — standalone Spark cluster
+mesos://HOST:PORT — Mesos cluster
+yarn — YARN cluster
+
+$ cat myapp.py
+... lots of Python code ...
+
+$ spark-submit myapp.py
+... lots of Spark messages ...
+
+
+year_data.aggregateByKey((0.0,0),(lambda x, y: (x[0]+y[0],x[1]+y[1])),(lambda rdd1, rdd2:(rdd1[0]+rdd2[0], rdd1[1]+rdd2[1])))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#submit
+from pyspark import SparkConf, SparkContext
+sc = SparkContext(conf=SparkConf().setAppName("MyApp").setMaster("local"))
+import re
+def parse_article(line):
+    try:
+        article_id, text = unicode(line.rstrip()).split('\t', 1)
+        text = re.sub("^\W+|\W+$", "", text, flags=re.UNICODE).lower()
+        words = re.split("\W*\s+\W*", text, flags=re.UNICODE)
+        return words
+    except ValueError as e:
+        return []
+wiki = sc.textFile("/data/wiki/en_articles_part/articles-part").map(parse_article)
+result = wiki.collect()
+
+result_list = {}
+for word_list in result:
+    for i in range(len(word_list) - 1):
+        word_list[i] = re.sub("\W+", "", word_list[i])
+        word_list[i+1] = re.sub("\W+", "", word_list[i+1])
+        if word_list[i] == 'narodnaya':
+            next_word = word_list[i+1]
+            if next_word in result_list:
+                result_list[next_word] += 1
+            else:
+                result_list[next_word] = 1
+for i in result_list:
+    print '%s\t%s'%('narodnaya_'+i,result_list[i])
